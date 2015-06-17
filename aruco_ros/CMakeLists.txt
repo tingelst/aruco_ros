@@ -1,6 +1,8 @@
 cmake_minimum_required(VERSION 2.8.3)
 project(aruco_ros)
 
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+
 find_package(catkin REQUIRED COMPONENTS
   cv_bridge
   dynamic_reconfigure
@@ -36,6 +38,11 @@ add_executable(double src/simple_double.cpp
                       src/aruco_ros_utils.cpp)
 add_dependencies(double ${PROJECT_NAME}_gencfg)
 target_link_libraries(double ${catkin_LIBRARIES})
+
+add_executable(chessboard src/simple_chessboard.cpp
+                      src/aruco_ros_utils.cpp)
+add_dependencies(double ${PROJECT_NAME}_gencfg)
+target_link_libraries(chessboard ${catkin_LIBRARIES})
 
 add_executable(marker_publisher src/marker_publish.cpp
                                 src/aruco_ros_utils.cpp)
