@@ -93,7 +93,6 @@ public:
     position_pub = nh.advertise<geometry_msgs::Vector3Stamped>("position", 100);
 
     nh.param<double>("marker_size", marker_size, 0.05);
-    nh.param<int>("marker_id", marker_id, 300);
     nh.param<std::string>("reference_frame", reference_frame, "");
     nh.param<std::string>("camera_frame", camera_frame, "");
     nh.param<std::string>("marker_frame", marker_frame, "");
@@ -106,7 +105,7 @@ public:
 
     if (reference_frame.empty()) reference_frame = camera_frame;
 
-    ROS_INFO("Aruco node started with marker size of %f m and marker id to track: %d", marker_size, marker_id);
+    ROS_INFO("Aruco node started with chessboard detection with marker size of %f m.", marker_size);
     ROS_INFO("Aruco node will publish pose to TF with %s as parent and %s as child.", reference_frame.c_str(),
              marker_frame.c_str());
   }
@@ -156,54 +155,51 @@ public:
         board_detector_.setParams(board_configuration_, camParam, marker_size);
         double prob = board_detector_.detect(inImage);
         markers = board_detector_.getDetectedMarkers();
-        // for each marker, draw info and its boundaries in the image
-        for (size_t i = 0; i < markers.size(); ++i)
-        {
-          // only publishing the selected marker
-          if (markers[i].id == marker_id)
-          {
-            tf::Transform transform = aruco_ros::arucoMarker2Tf(markers[i]);
-            tf::StampedTransform cameraToReference;
-            cameraToReference.setIdentity();
+        auto board = board_detector_.getDetectedBoard();
 
-            if (reference_frame != camera_frame)
+        if (prob > 0.2)
+        {
+          tf::Transform transform = aruco_ros::arucoBoard2Tf(board);
+          tf::StampedTransform cameraToReference;
+          cameraToReference.setIdentity();
+
+          if (reference_frame != camera_frame)
+          {
+            getTransform(reference_frame, camera_frame, cameraToReference);
+          }
+
+          transform =
+              static_cast<tf::Transform>(cameraToReference) * static_cast<tf::Transform>(rightToLeft) * transform;
+
+          tf::StampedTransform stampedTransform(transform, curr_stamp, reference_frame, marker_frame);
+          br.sendTransform(stampedTransform);
+          geometry_msgs::PoseStamped poseMsg;
+          tf::poseTFToMsg(transform, poseMsg.pose);
+          poseMsg.header.frame_id = reference_frame;
+          poseMsg.header.stamp = curr_stamp;
+          pose_pub.publish(poseMsg);
+
+          geometry_msgs::TransformStamped transformMsg;
+          tf::transformStampedTFToMsg(stampedTransform, transformMsg);
+          transform_pub.publish(transformMsg);
+
+          geometry_msgs::Vector3Stamped positionMsg;
+          positionMsg.header = transformMsg.header;
+          positionMsg.vector = transformMsg.transform.translation;
+          position_pub.publish(positionMsg);
+
+          // draw a 3d cube in each marker if there is 3d info
+          if (camParam.isValid() && marker_size != -1)
+          {
+            for (size_t i = 0; i < markers.size(); ++i)
             {
-              getTransform(reference_frame, camera_frame, cameraToReference);
+              // draw all the detected markers
+              markers[i].draw(inImage, cv::Scalar(0, 0, 255), 2);
+//              CvDrawingUtils::draw3dCube(inImage, markers[i], camParam);
             }
-
-            transform =
-                static_cast<tf::Transform>(cameraToReference) * static_cast<tf::Transform>(rightToLeft) * transform;
-
-            tf::StampedTransform stampedTransform(transform, curr_stamp, reference_frame, marker_frame);
-            br.sendTransform(stampedTransform);
-            geometry_msgs::PoseStamped poseMsg;
-            tf::poseTFToMsg(transform, poseMsg.pose);
-            poseMsg.header.frame_id = reference_frame;
-            poseMsg.header.stamp = curr_stamp;
-            pose_pub.publish(poseMsg);
-
-            geometry_msgs::TransformStamped transformMsg;
-            tf::transformStampedTFToMsg(stampedTransform, transformMsg);
-            transform_pub.publish(transformMsg);
-
-            geometry_msgs::Vector3Stamped positionMsg;
-            positionMsg.header = transformMsg.header;
-            positionMsg.vector = transformMsg.transform.translation;
-            position_pub.publish(positionMsg);
+            // draw a 3d frame on the board
+            CvDrawingUtils::draw3dAxis(inImage, board, camParam);
           }
-          // but drawing all the detected markers
-          markers[i].draw(inImage, cv::Scalar(0, 0, 255), 2);
-        }
-
-        // draw a 3d cube in each marker if there is 3d info
-        if (camParam.isValid() && marker_size != -1)
-        {
-          for (size_t i = 0; i < markers.size(); ++i)
-          {
-//            CvDrawingUtils::draw3dAxis(inImage, markers[i], camParam);
-          }
-          // draw a 3d frame on the board
-          CvDrawingUtils::draw3dAxis(inImage, board_detector_.getDetectedBoard(), camParam);
         }
 
         if (image_pub.getNumSubscribers() > 0)
@@ -222,7 +218,7 @@ public:
           cv_bridge::CvImage debug_msg;
           debug_msg.header.stamp = curr_stamp;
           debug_msg.encoding = sensor_msgs::image_encodings::MONO8;
-          debug_msg.image = mDetector.getThresholdedImage();
+          debug_msg.image = board_detector_.getMarkerDetector().getThresholdedImage();
           debug_pub.publish(debug_msg.toImageMsg());
         }
       }
